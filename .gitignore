@@ -22,6 +22,7 @@ Thumbs.db
 *.ap_
 *.jks
 *.keystore
+!app/debug.keystore
 keystore.properties
 
 # Models are large and user-supplied; never commit them

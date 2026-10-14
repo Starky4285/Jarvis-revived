@@ -32,8 +32,13 @@ Requirements: Android Studio (recent), JDK 17, Android SDK 35, NDK + CMake 3.22.
 ./gradlew :app:assembleDebug  # APK in app/build/outputs/apk/debug/
 ```
 
-Every push runs both on GitHub Actions (see the **Build** workflow); the debug
-APK is attached to each run as an artifact.
+Every push runs both on GitHub Actions (see the **Build** workflow). Each push
+to `main` also publishes the APK as the **Latest debug build** release:
+<https://github.com/Starky4285/Jarvis-revived/releases/tag/debug-latest>
+(open it on the phone and install `jarvis-revived-debug.apk`).
+
+All debug builds are signed with the same key (`app/debug.keystore`), so a new
+build installs over the old one and Jarvis keeps its memory.
 
 ## Add a model
 

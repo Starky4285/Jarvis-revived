@@ -26,7 +26,22 @@ android {
         }
     }
 
+    // One fixed debug key for every build (Android Studio and GitHub Actions), so a
+    // new APK installs OVER the old one and Jarvis' memory survives updates.
+    // Debug keys are not secret; never use this key for a Play Store release.
+    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
         }
