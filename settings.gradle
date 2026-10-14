@@ -1,0 +1,23 @@
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "JarvisRevived"
+
+// :core  — pure Java (no Android). Memory, turn routing, prompt + answer rules.
+//          Fully unit-testable on any computer: ./gradlew :core:test
+// :app   — thin Android layer: speech, model bridge, SQLite store, device actions, UI.
+include ':core'
+include ':app'

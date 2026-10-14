@@ -1,0 +1,33 @@
+# Gradle / Android build output
+.gradle/
+build/
+*/build/
+.externalNativeBuild/
+.cxx/
+local.properties
+captures/
+
+# IDE
+.idea/
+*.iml
+.navigation/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Packages and signing (never commit)
+*.apk
+*.aab
+*.ap_
+*.jks
+*.keystore
+keystore.properties
+
+# Models are large and user-supplied; never commit them
+*.gguf
+*.bin
+
+# Logs / temp
+*.log
+*.tmp
