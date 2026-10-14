@@ -1,0 +1,9 @@
+<resources>
+    <color name="bg">#FF0E1116</color>
+    <color name="surface">#FF171B22</color>
+    <color name="text">#FFE8EAED</color>
+    <color name="muted">#FF9AA0A6</color>
+    <color name="accent">#FF4FC3F7</color>
+    <color name="user_bubble">#FF1F3A4D</color>
+    <color name="jarvis_bubble">#FF22262E</color>
+</resources>

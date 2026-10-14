@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">Jarvis</string>
+    <string name="memory_title">What Jarvis remembers</string>
+    <string name="talk">Talk</string>
+    <string name="continuous">Hands-free</string>
+    <string name="stop">Stop</string>
+    <string name="send">Send</string>
+    <string name="type_hint">Type to Jarvis…</string>
+    <string name="import_model">Import model</string>
+    <string name="memory">Memory</string>
+    <string name="forget_everything">Forget everything</string>
+    <string name="notification_channel">Assistant</string>
+    <string name="notification_listening">Listening hands-free</string>
+    <string name="notification_actions">Jarvis actions</string>
+</resources>
