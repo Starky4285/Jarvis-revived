@@ -25,4 +25,9 @@ public interface ChatModel {
 
     /** Stops the current generation as soon as possible. Safe from any thread. */
     void abort();
+
+    /** Human-readable timing of the last generation (for tuning on the phone). "" if unknown. */
+    default String lastStats() {
+        return "";
+    }
 }

@@ -127,6 +127,34 @@ public final class TurnRouterTest {
     }
 
     @Test
+    public void promptStartsWithTheSameCacheablePrefixEveryTime() {
+        String prefix = com.jarvis.core.llm.PromptBuilder.staticPrefix("Jarvis");
+        model.outputs.add("Hello there, nice to meet you.");
+        say("hello");
+        say("my name is arjun");           // memory turn: must not enter the model window
+        now += 3_600_000L;                  // an hour later: time in the prompt changes
+        model.outputs.add("It is a fine evening.");
+        say("how is the evening");
+        assertEquals(2, model.prompts.size());
+        for (String p : model.prompts) {
+            assertTrue(p.startsWith(prefix));
+        }
+        String second = model.prompts.get(1);
+        assertTrue(second, second.contains("hello"));
+        assertFalse("memory turns must not be replayed as chat history", second.contains("Got it."));
+        assertTrue(second, second.contains("Arjun") || second.contains("arjun"));
+    }
+
+    @Test
+    public void whoAmINeverReachesTheModel() {
+        say("my name is arjun");
+        TurnRouter.Result r = say("who am I");
+        assertEquals(TurnRouter.Route.MEMORY, r.route);
+        assertEquals("Your name is Arjun.", r.reply);
+        assertTrue(model.prompts.isEmpty());
+    }
+
+    @Test
     public void modelTextIsNeverExecuted() {
         model.outputs.add("Sure, I am calling Ravi now and opening WhatsApp.");
         say("what do you think about ravi");

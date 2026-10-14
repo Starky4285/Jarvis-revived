@@ -46,4 +46,10 @@ final class LlamaBridge {
     static native void nativeFreeModel();
 
     static native String nativeStatus();
+
+    /** Timing of the last generation, e.g. "read 180 tok (150 cached) in 2.1 s, wrote 30 tok in 5.4 s". */
+    static native String nativeLastStats();
+
+    /** Changes CPU threads used for prompt reading and generation, without reloading. */
+    static native void nativeSetThreads(int threads);
 }

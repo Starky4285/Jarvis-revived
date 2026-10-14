@@ -17,8 +17,8 @@ public final class LlamaModel implements ChatModel {
 
     /** Phi-3-mini KV cache at 1024 tokens is ~400 MB; safe on a 4-6 GB phone. */
     private static final int CONTEXT_TOKENS = 1024;
-    /** Galaxy A15 = 2 big + 6 little cores; 4 threads beat 8 in practice. */
-    private static final int THREADS = 4;
+    /** Default CPU threads. Galaxy A15 = 2 fast + 6 slow cores; tune with {@link #setThreads}. */
+    public static final int DEFAULT_THREADS = 4;
 
     public interface Listener {
         void onStateChanged(State state, String detail);
@@ -28,6 +28,9 @@ public final class LlamaModel implements ChatModel {
     private volatile State state = State.NO_MODEL;
     private volatile String detail = "";
     private volatile Listener listener;
+    private volatile int threads = DEFAULT_THREADS;
+    /** Decoded once after loading so the fixed system prompt is already in the KV cache. */
+    private volatile String warmupPrompt = "";
 
     public LlamaModel(Context context) {
         this.appContext = context.getApplicationContext();
@@ -37,6 +40,26 @@ public final class LlamaModel implements ChatModel {
             setState(State.NO_MODEL, "Model found, not loaded yet");
         } else {
             setState(State.NO_MODEL, "No model imported");
+        }
+    }
+
+    public void setWarmupPrompt(String prompt) {
+        warmupPrompt = prompt == null ? "" : prompt;
+    }
+
+    public int threads() {
+        return threads;
+    }
+
+    /** Applies immediately if a model is loaded; otherwise used at the next load. */
+    public void setThreads(int n) {
+        threads = Math.max(1, Math.min(8, n));
+        if (LlamaBridge.LIBRARY_LOADED && state == State.READY) {
+            try {
+                LlamaBridge.nativeSetThreads(threads);
+            } catch (Throwable e) {
+                Log.e(TAG, "setThreads failed", e);
+            }
         }
     }
 
@@ -68,14 +91,26 @@ public final class LlamaModel implements ChatModel {
             long start = System.currentTimeMillis();
             boolean ok;
             try {
-                ok = LlamaBridge.nativeLoadModel(file.getAbsolutePath(), CONTEXT_TOKENS, THREADS);
+                ok = LlamaBridge.nativeLoadModel(file.getAbsolutePath(), CONTEXT_TOKENS, threads);
             } catch (Throwable e) {
                 Log.e(TAG, "Model load crashed", e);
                 ok = false;
             }
             long secs = (System.currentTimeMillis() - start) / 1000;
             if (ok) {
-                setState(State.READY, "Model ready (" + secs + " s to load)");
+                String warm = warmupPrompt;
+                if (!warm.isEmpty()) {
+                    setState(State.LOADING, "Loaded in " + secs + " s, warming up…");
+                    long w0 = System.currentTimeMillis();
+                    try {
+                        // Generates 1 token; the point is caching the fixed system prompt.
+                        LlamaBridge.nativeGenerate(warm, 1, LlamaBridge.MODE_FREE, 0, null);
+                    } catch (Throwable e) {
+                        Log.e(TAG, "Warm-up failed", e);
+                    }
+                    secs += (System.currentTimeMillis() - w0) / 1000;
+                }
+                setState(State.READY, "Model ready (" + secs + " s) · " + threads + " threads");
             } else {
                 setState(State.FAILED, "Model failed to load. Try a smaller GGUF (Q4_K_M).");
             }
@@ -128,6 +163,16 @@ public final class LlamaModel implements ChatModel {
             LlamaBridge.nativeAbort();
         } catch (Throwable ignored) {
             // nothing to abort
+        }
+    }
+
+    @Override
+    public String lastStats() {
+        if (!LlamaBridge.LIBRARY_LOADED || state != State.READY) return "";
+        try {
+            return LlamaBridge.nativeLastStats() + " · " + threads + " threads";
+        } catch (Throwable e) {
+            return "";
         }
     }
 

@@ -54,7 +54,8 @@ public final class TurnRouter {
         }
     }
 
-    static final int MODEL_MAX_TOKENS = 96;
+    /** ~2 short sentences. Each extra token costs ~0.2 s on a Galaxy A15. */
+    static final int MODEL_MAX_TOKENS = 72;
     static final int MODEL_MAX_SENTENCES = 2;
     static final int EXTRACT_MAX_TOKENS = 64;
 
@@ -128,7 +129,8 @@ public final class TurnRouter {
         MemoryResult mem = memory.handle(text);
         if (mem.handled()) {
             memory.recordAssistantTurn(mem.reply);
-            window.add(text, mem.reply);
+            // Not added to the model's conversation window: memory already holds it,
+            // and every extra history token makes the next model answer slower.
             return new Result(Route.MEMORY, mem.reply, false);
         }
 
@@ -199,7 +201,7 @@ public final class TurnRouter {
         // One quiet retry without history, asking for a single sentence.
         String retryPrompt = PromptBuilder.chat(text + " (Answer in one short sentence.)",
                 memoryContext, null, assistantName, nowText);
-        String retry = AnswerGuard.clean(model.generate(retryPrompt, MODEL_MAX_TOKENS / 2, 1, null));
+        String retry = AnswerGuard.clean(model.generate(retryPrompt, 40, 1, null));
         if (AnswerGuard.isGood(retry)) {
             return new Result(Route.MODEL, retry, false);
         }

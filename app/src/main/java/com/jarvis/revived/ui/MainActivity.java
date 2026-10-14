@@ -49,6 +49,8 @@ public final class MainActivity extends Activity implements AssistantController.
     private LinearLayout transcript;
     private ScrollView scroll;
     private EditText etInput;
+    /** Bubble that grows while the model is still writing; replaced by the final reply. */
+    private TextView liveBubble;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -76,6 +78,14 @@ public final class MainActivity extends Activity implements AssistantController.
         findViewById(R.id.btnImportModel).setOnClickListener(v -> pickModel());
         findViewById(R.id.btnMemory).setOnClickListener(v -> startActivity(new Intent(this, MemoryActivity.class)));
 
+        // Speed tuning: long-press the model line to try 2 / 4 / 6 / 8 CPU threads.
+        tvModel.setOnLongClickListener(v -> {
+            int n = controller.cycleThreads();
+            Toast.makeText(this, "Using " + n + " CPU threads. Ask something and compare the \"Last answer\" time.",
+                    Toast.LENGTH_LONG).show();
+            return true;
+        });
+
     }
 
     @Override
@@ -83,6 +93,7 @@ public final class MainActivity extends Activity implements AssistantController.
         super.onResume();
         controller.setUiVisible(true);
         transcript.removeAllViews(); // the controller replays the conversation
+        liveBubble = null;
         controller.addListener(this);
     }
 
@@ -189,7 +200,7 @@ public final class MainActivity extends Activity implements AssistantController.
         String label;
         switch (status) {
             case LISTENING: label = detail.isEmpty() ? "Listening…" : "“" + detail + "”"; break;
-            case THINKING: label = "Thinking…"; break;
+            case THINKING: label = detail.isEmpty() ? "Thinking…" : detail; break;
             case SPEAKING: label = "Speaking"; break;
             default: label = controller.isHandsFree() ? "Hands-free" : (detail.isEmpty() ? "" : detail);
         }
@@ -198,7 +209,23 @@ public final class MainActivity extends Activity implements AssistantController.
 
     @Override
     public void onTranscript(boolean fromUser, String text) {
+        if (!fromUser && liveBubble != null) {
+            liveBubble.setText(text);
+            liveBubble = null;
+            return;
+        }
+        liveBubble = null;
         addBubble(fromUser, text);
+    }
+
+    @Override
+    public void onReplyProgress(String textSoFar) {
+        if (liveBubble == null) {
+            liveBubble = addBubble(false, textSoFar);
+        } else {
+            liveBubble.setText(textSoFar);
+            scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
+        }
     }
 
     @Override
@@ -215,7 +242,7 @@ public final class MainActivity extends Activity implements AssistantController.
 
     // ------------------------------------------------------------------ view
 
-    private void addBubble(boolean fromUser, String text) {
+    private TextView addBubble(boolean fromUser, String text) {
         TextView tv = new TextView(this);
         tv.setText(text);
         tv.setTextSize(16);
@@ -236,6 +263,7 @@ public final class MainActivity extends Activity implements AssistantController.
 
         while (transcript.getChildCount() > MAX_BUBBLES) transcript.removeViewAt(0);
         scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
+        return tv;
     }
 
     private int dp(int v) {

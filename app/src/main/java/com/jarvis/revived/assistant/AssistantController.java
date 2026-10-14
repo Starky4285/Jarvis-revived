@@ -8,6 +8,7 @@ import android.os.Looper;
 import android.util.Log;
 
 import com.jarvis.core.llm.ChatModel;
+import com.jarvis.core.llm.PromptBuilder;
 import com.jarvis.core.memory.MemoryEngine;
 import com.jarvis.core.turn.TurnRouter;
 import com.jarvis.revived.actions.ActionLauncher;
@@ -47,7 +48,16 @@ public final class AssistantController {
         void onTranscript(boolean fromUser, String text);
 
         void onModelState(ChatModel.State state, String detail);
+
+        /** Jarvis' reply so far while the model is still writing it (replaced by the final transcript). */
+        default void onReplyProgress(String textSoFar) {
+        }
     }
+
+    /** If the model hasn't finished after this long, stop it and say so. */
+    private static final long THINKING_LIMIT_MS = 90_000L;
+    private static final String PREFS = "jarvis_settings";
+    private static final String KEY_THREADS = "llm_threads";
 
     private final Context app;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -72,6 +82,21 @@ public final class AssistantController {
     private boolean handsFree = false;
     private int failedListens = 0;
     private volatile boolean uiVisible = false;
+    private long thinkingSince = 0L;
+    private final StringBuilder liveReply = new StringBuilder();
+    private final Runnable thinkingTick = new Runnable() {
+        @Override
+        public void run() {
+            if (!busy) return;
+            long secs = (System.currentTimeMillis() - thinkingSince) / 1000;
+            if (System.currentTimeMillis() - thinkingSince > THINKING_LIMIT_MS) {
+                Log.w(TAG, "Thinking limit reached; aborting the model");
+                model.abort();
+            }
+            if (status == Status.THINKING) setStatus(Status.THINKING, "Thinking… " + secs + " s");
+            main.postDelayed(this, 1000);
+        }
+    };
 
     public AssistantController(Context context) {
         this.app = context.getApplicationContext();
@@ -80,6 +105,9 @@ public final class AssistantController {
         memory = new MemoryEngine(store, System::currentTimeMillis, ZoneId.systemDefault());
 
         model = new LlamaModel(app);
+        model.setThreads(app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getInt(KEY_THREADS, LlamaModel.DEFAULT_THREADS));
+        model.setWarmupPrompt(PromptBuilder.staticPrefix(ASSISTANT_NAME));
         model.setListener((state, detail) -> main.post(() -> {
             for (Listener l : listeners) l.onModelState(state, detail);
         }));
@@ -125,6 +153,26 @@ public final class AssistantController {
 
     public boolean isHandsFree() {
         return handsFree;
+    }
+
+    public int threads() {
+        return model.threads();
+    }
+
+    /** Cycles 2 → 4 → 6 → 8 threads (for finding the fastest setting on this phone). */
+    public int cycleThreads() {
+        int[] options = {2, 4, 6, 8};
+        int next = options[0];
+        for (int i = 0; i < options.length; i++) {
+            if (options[i] == model.threads()) {
+                next = options[(i + 1) % options.length];
+                break;
+            }
+        }
+        final int n = next;
+        app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(KEY_THREADS, n).apply();
+        brain.execute(() -> model.setThreads(n)); // waits for any running generation
+        return n;
     }
 
     // ---------------------------------------------------------- user controls
@@ -256,11 +304,18 @@ public final class AssistantController {
     private void process(String text) {
         transcript(true, text);
         busy = true;
+        liveReply.setLength(0);
+        thinkingSince = System.currentTimeMillis();
         setStatus(Status.THINKING, "");
+        main.removeCallbacks(thinkingTick);
+        main.postDelayed(thinkingTick, 1000);
         brain.execute(() -> {
             TurnRouter.Result result;
             try {
                 result = router.handle(text, chunk -> main.post(() -> {
+                    if (liveReply.length() > 0) liveReply.append(' ');
+                    liveReply.append(chunk);
+                    for (Listener l : listeners) l.onReplyProgress(liveReply.toString());
                     setStatus(Status.SPEAKING, "");
                     tts.speak(chunk);
                 }));
@@ -275,6 +330,15 @@ public final class AssistantController {
 
     private void onResult(TurnRouter.Result r) {
         busy = false;
+        main.removeCallbacks(thinkingTick);
+        long tookMs = System.currentTimeMillis() - thinkingSince;
+        if (r != null && (r.route == TurnRouter.Route.MODEL || r.route == TurnRouter.Route.FALLBACK)
+                && model.state() == ChatModel.State.READY) {
+            String stats = model.lastStats();
+            String line = String.format(Locale.US, "Last answer %.1f s", tookMs / 1000.0)
+                    + (stats.isEmpty() ? "" : " · " + stats);
+            for (Listener l : listeners) l.onModelState(ChatModel.State.READY, line);
+        }
         if (r == null) {
             transcript(false, "Something went wrong on my side. Please try again.");
             tts.speak("Something went wrong on my side.");

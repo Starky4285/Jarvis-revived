@@ -53,6 +53,10 @@ public final class MemoryParser {
             "(?i)^(?:what do you (?:know|remember) about me|what have you (?:saved|remembered|stored)(?: about me)?"
                     + "|(?:list|show)(?: me)? (?:my |your )?memor(?:y|ies)|what(?:'s| is) in your memory)$");
 
+    /** Ways of asking "what's my name" that don't follow the "what is my X" shape. */
+    private static final Pattern WHO_AM_I = Pattern.compile(
+            "(?i)^(?:who am i|do you know (?:me|who i am|my name)|what do you call me|tell me my name"
+                    + "|do you remember (?:me|my name)|what(?:'s| is) my good name)$");
     private static final Pattern RECALL_MY = Pattern.compile(
             "(?i)^(?:what|who|when|where|which)(?:'s|'re| is| are| was| were)? my (.+)$");
     private static final Pattern RECALL_HOW_OLD = Pattern.compile(
@@ -132,6 +136,10 @@ public final class MemoryParser {
         m = RECALL_TOLD.matcher(t);
         if (m.matches()) {
             return MemoryCommand.of(MemoryCommand.Type.RECALL_SOFT, m.group(1), "", t);
+        }
+
+        if (WHO_AM_I.matcher(l).matches()) {
+            return MemoryCommand.of(MemoryCommand.Type.RECALL, "name", "", t);
         }
 
         m = RECALL_HOW_OLD.matcher(t);

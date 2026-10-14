@@ -21,6 +21,8 @@
 #include <mutex>
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <cstdio>
 #include <android/log.h>
 
 #include "llama.h"
@@ -40,6 +42,18 @@ namespace {
     static std::atomic<bool> g_abort_requested(false);
     static std::atomic<bool> g_backend_initialized(false);
     static std::mutex g_state_mutex;
+
+    // Timing of the last generation, shown in the app so speed can be tuned on the phone.
+    static int32_t g_stat_prompt_tokens = 0;
+    static int32_t g_stat_reused_tokens = 0;
+    static int64_t g_stat_prompt_ms = 0;
+    static int32_t g_stat_gen_tokens = 0;
+    static int64_t g_stat_gen_ms = 0;
+
+    int64_t now_ms() {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
 
     static int32_t g_ctx_size = 1024;
     static int32_t g_threads  = 4;
@@ -634,6 +648,13 @@ namespace {
             return make_empty_string(env);
         }
 
+        // Record the size first so a rejected prompt is visible in the stats, too.
+        g_stat_prompt_tokens = static_cast<int32_t>(prompt_tokens.size());
+        g_stat_reused_tokens = 0;
+        g_stat_prompt_ms = 0;
+        g_stat_gen_tokens = 0;
+        g_stat_gen_ms = 0;
+
         if (static_cast<int32_t>(prompt_tokens.size()) >= (g_ctx_size - 8)) {
             LOGE("Prompt too long for context (%d >= %d)",
                  static_cast<int>(prompt_tokens.size()), g_ctx_size - 8);
@@ -652,11 +673,19 @@ namespace {
                 prompt_tokens.begin() + static_cast<long>(common_prefix),
                 prompt_tokens.end());
 
+        g_stat_prompt_tokens = static_cast<int32_t>(prompt_tokens.size());
+        g_stat_reused_tokens = static_cast<int32_t>(common_prefix);
+        g_stat_gen_tokens = 0;
+        g_stat_gen_ms = 0;
+        const int64_t t_prompt = now_ms();
+
         if (!decode_tokens_locked(suffix_tokens, static_cast<int32_t>(common_prefix))) {
             reset_kv_after_failure_locked();
             return make_empty_string(env);
         }
         g_prompt_tokens = prompt_tokens;
+        g_stat_prompt_ms = now_ms() - t_prompt;
+        const int64_t t_gen = now_ms();
 
         llama_sampler *sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
         if (sampler == nullptr) return make_empty_string(env);
@@ -710,6 +739,7 @@ namespace {
 
             if (!decode_one_token_locked(token, n_past)) break;
             n_past++;
+            g_stat_gen_tokens++;
 
             if (streaming && onPartialMethod != nullptr && !json_mode && chunk_is_flushable(partialChunk)) {
                 const size_t safe_len = utf8_complete_prefix_len(partialChunk);
@@ -723,6 +753,11 @@ namespace {
 
             if (json_mode && json_object_closed(response)) break;
         }
+
+        g_stat_gen_ms = now_ms() - t_gen;
+        LOGD("timing: prompt %d tok (%d reused) %lld ms | gen %d tok %lld ms",
+             g_stat_prompt_tokens, g_stat_reused_tokens, (long long) g_stat_prompt_ms,
+             g_stat_gen_tokens, (long long) g_stat_gen_ms);
 
         response.resize(utf8_complete_prefix_len(response));
         partialChunk.resize(utf8_complete_prefix_len(partialChunk));
@@ -820,6 +855,29 @@ Java_com_jarvis_revived_llm_LlamaBridge_nativeFreeModel(JNIEnv *, jclass) {
         llama_backend_free();
         g_backend_initialized.store(false);
     }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_jarvis_revived_llm_LlamaBridge_nativeSetThreads(JNIEnv *, jclass, jint threads) {
+    std::lock_guard<std::mutex> lock(g_state_mutex);
+    const int32_t n = threads < 1 ? 1 : (threads > 8 ? 8 : static_cast<int32_t>(threads));
+    g_threads = n;
+    if (g_ctx != nullptr) {
+        llama_set_n_threads(g_ctx, n, n);
+    }
+    LOGD("threads set to %d", n);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_jarvis_revived_llm_LlamaBridge_nativeLastStats(JNIEnv *env, jclass) {
+    // No lock: plain counters, written only by the generating thread; a torn read is harmless.
+    char buf[200];
+    const double gen_s = g_stat_gen_ms / 1000.0;
+    const double tps = gen_s > 0 ? g_stat_gen_tokens / gen_s : 0.0;
+    snprintf(buf, sizeof(buf), "read %d tok (%d cached) in %.1f s, wrote %d tok in %.1f s (%.1f tok/s)",
+             g_stat_prompt_tokens, g_stat_reused_tokens, g_stat_prompt_ms / 1000.0,
+             g_stat_gen_tokens, gen_s, tps);
+    return make_jstring_utf8(env, std::string(buf));
 }
 
 extern "C" JNIEXPORT jstring JNICALL

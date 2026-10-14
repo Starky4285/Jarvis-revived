@@ -302,6 +302,16 @@ public final class MemoryFaultLineTest {
     }
 
     @Test
+    public void whoAmIIsAnsweredFromMemory() {
+        say("my name is arjun");
+        for (String q : new String[]{"who am I", "Who am I?", "do you know me", "what do you call me", "do you know my name"}) {
+            MemoryResult r = say(q);
+            assertEquals(q, MemoryResult.Kind.RECALLED, r.kind);
+            assertEquals(q, "Your name is Arjun.", r.reply);
+        }
+    }
+
+    @Test
     public void namesAreReadBackCapitalized() {
         say("my name is stark");
         assertEquals("Your name is Stark.", say("what is my name").reply);
