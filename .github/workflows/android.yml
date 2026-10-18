@@ -29,13 +29,21 @@ jobs:
         run: ./gradlew :app:assembleDebug --stacktrace
 
       - name: Privacy check (the APK must not have the INTERNET permission)
+        shell: bash
         run: |
           AAPT2="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)aapt2"
-          "$AAPT2" dump permissions app/build/outputs/apk/debug/app-debug.apk | tee permissions.txt
+          "$AAPT2" dump permissions app/build/outputs/apk/debug/app-debug.apk > permissions.txt
+          cat permissions.txt
+          # Make sure the dump really worked, so the check below can't pass on empty output.
+          if ! grep -q "android.permission.RECORD_AUDIO" permissions.txt; then
+            echo "::error::Could not read the APK's permissions (RECORD_AUDIO not found), so the privacy check can't run."
+            exit 1
+          fi
           if grep -q "android.permission.INTERNET" permissions.txt; then
             echo "::error::The APK declares android.permission.INTERNET. Jarvis must never be able to connect."
             exit 1
           fi
+          echo "OK: no INTERNET permission."
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
