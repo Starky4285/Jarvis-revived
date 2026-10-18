@@ -2,8 +2,10 @@ package com.jarvis.revived.ui;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
@@ -17,6 +19,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -24,14 +27,16 @@ import com.jarvis.core.llm.ChatModel;
 import com.jarvis.revived.JarvisApp;
 import com.jarvis.revived.R;
 import com.jarvis.revived.assistant.AssistantController;
+import com.jarvis.revived.speech.SpeechInput;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Single screen: conversation, type box, Talk / Hands-free / Stop, model import
- * and the Memory screen. Asks for the microphone only when the user first
- * taps Talk, and for optional permissions once.
+ * Single screen: conversation, type box, Talk / Hands-free / Stop, Confirm /
+ * Cancel for actions that wait for a yes, model import, the Memory screen and
+ * the Privacy panel. Asks for the microphone only when the user first taps
+ * Talk, and for optional permissions once.
  */
 public final class MainActivity extends Activity implements AssistantController.Listener {
 
@@ -49,6 +54,7 @@ public final class MainActivity extends Activity implements AssistantController.
     private LinearLayout transcript;
     private ScrollView scroll;
     private EditText etInput;
+    private View confirmRow;
     /** Bubble that grows while the model is still writing; replaced by the final reply. */
     private TextView liveBubble;
 
@@ -63,6 +69,10 @@ public final class MainActivity extends Activity implements AssistantController.
         transcript = findViewById(R.id.transcript);
         scroll = findViewById(R.id.scroll);
         etInput = findViewById(R.id.etInput);
+        confirmRow = findViewById(R.id.confirmRow);
+        findViewById(R.id.btnConfirm).setOnClickListener(v -> controller.submitText("yes"));
+        findViewById(R.id.btnCancel).setOnClickListener(v -> controller.submitText("no"));
+        findViewById(R.id.btnPrivacy).setOnClickListener(v -> showPrivacy());
 
         findViewById(R.id.btnSend).setOnClickListener(v -> sendTyped());
         etInput.setOnEditorActionListener((v, actionId, event) -> {
@@ -226,6 +236,112 @@ public final class MainActivity extends Activity implements AssistantController.
             liveBubble.setText(textSoFar);
             scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
         }
+    }
+
+    @Override
+    public void onAwaitingConfirmation(boolean waiting) {
+        confirmRow.setVisibility(waiting ? View.VISIBLE : View.GONE);
+    }
+
+    @Override
+    public void onSpeechUnavailable() {
+        new AlertDialog.Builder(this)
+                .setTitle("No offline speech on this phone")
+                .setMessage("Jarvis only listens with speech recognition that runs on the phone. This phone doesn't "
+                        + "have it (or its language pack isn't installed).\n\nYou can type instead, or allow the "
+                        + "phone's online recognizer. Then your voice may be sent to Google to be turned into text; "
+                        + "everything else stays on the phone.")
+                .setPositiveButton("Type instead", null)
+                .setNegativeButton("Allow online speech", (d, w) -> {
+                    controller.setAllowOnlineSpeech(true);
+                    Toast.makeText(this, "Online speech allowed. Tap Talk again. You can turn it off in Privacy.",
+                            Toast.LENGTH_LONG).show();
+                })
+                .show();
+    }
+
+    // ---------------------------------------------------------------- privacy
+
+    private void showPrivacy() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(20);
+        box.setPadding(pad, dp(8), pad, 0);
+
+        boolean internet = declaresInternet();
+        addLine(box, (internet ? "✗ " : "✓ ") + (internet
+                ? "This build declares the internet permission."
+                : "No internet permission: Android itself blocks every connection from Jarvis."));
+        Boolean encrypted = controller.memoryEncrypted();
+        addLine(box, encrypted == null
+                ? "• The encrypted memory vault is still opening…"
+                : encrypted
+                ? "✓ Memory is encrypted on this phone (SQLCipher, key held by the Android Keystore)."
+                : "✗ Secure storage isn't working: nothing you say is saved this session.");
+        TextView speech = addLine(box, speechLine());
+        Boolean offlineVoice = controller.offlineVoice();
+        addLine(box, offlineVoice == null
+                ? "• Couldn't check whether the phone's voice works offline."
+                : offlineVoice
+                ? "✓ Replies are spoken with an offline voice."
+                : "! The phone only has an online voice for Jarvis, so the words it speaks may go to the voice "
+                + "provider. Download an offline voice in the phone's text-to-speech settings.");
+        addLine(box, "✓ Backups to Google and phone-to-phone transfer are off for Jarvis' data.");
+        addLine(box, "• Apps Jarvis opens for you (Maps, the dialer, Rapido…) work as usual and use the "
+                + "internet themselves. Jarvis never sends them anything except what you asked for.");
+
+        Switch online = new Switch(this);
+        online.setText("Allow online speech recognition (voice may go to Google)");
+        online.setTextColor(getColor(R.color.text));
+        online.setChecked(controller.allowOnlineSpeech());
+        online.setPadding(0, dp(12), 0, dp(8));
+        online.setOnCheckedChangeListener((b, on) -> {
+            controller.setAllowOnlineSpeech(on);
+            speech.setText(speechLine());
+        });
+        box.addView(online);
+
+        ScrollView scrollBox = new ScrollView(this);
+        scrollBox.addView(box);
+        // Always a dark dialog: the lines above use the app's light text colour.
+        new AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+                .setTitle("Privacy")
+                .setView(scrollBox)
+                .setPositiveButton("Close", null)
+                .show();
+    }
+
+    private String speechLine() {
+        SpeechInput.Mode mode = controller.speechMode();
+        switch (mode) {
+            case ON_DEVICE: return "✓ Speech is turned into text on this phone.";
+            case ONLINE: return "! Speech uses the phone's online recognizer (you allowed this).";
+            default: return "✗ No offline speech on this phone: type, or allow online speech below.";
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private boolean declaresInternet() {
+        try {
+            PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), PackageManager.GET_PERMISSIONS);
+            if (info.requestedPermissions == null) return false;
+            for (String p : info.requestedPermissions) {
+                if (Manifest.permission.INTERNET.equals(p)) return true;
+            }
+        } catch (PackageManager.NameNotFoundException ignored) {
+            // our own package always exists
+        }
+        return false;
+    }
+
+    private TextView addLine(LinearLayout box, String text) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextSize(15);
+        tv.setTextColor(getColor(R.color.text));
+        tv.setPadding(0, dp(6), 0, dp(6));
+        box.addView(tv);
+        return tv;
     }
 
     @Override

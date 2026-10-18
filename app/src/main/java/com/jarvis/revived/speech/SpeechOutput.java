@@ -6,11 +6,13 @@ import android.os.Handler;
 import android.os.Looper;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
+import android.speech.tts.Voice;
 import android.util.Log;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -28,6 +30,7 @@ public final class SpeechOutput {
     private final List<String> queuedBeforeReady = new ArrayList<>();
     private final TextToSpeech tts;
     private volatile boolean ready = false;
+    private volatile Boolean offlineVoice;
     private Runnable onIdle;
 
     private final String languageTag;
@@ -46,8 +49,10 @@ public final class SpeechOutput {
         Locale wanted = Locale.forLanguageTag(languageTag);
         int r = tts.setLanguage(wanted);
         if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
-            tts.setLanguage(Locale.US);
+            wanted = Locale.US;
+            tts.setLanguage(wanted);
         }
+        offlineVoice = preferOfflineVoice(wanted);
         tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
             @Override
             public void onStart(String utteranceId) {
@@ -75,6 +80,48 @@ public final class SpeechOutput {
             pending.addAndGet(-queued.size());
             for (String s : queued) speak(s);
         });
+    }
+
+    /**
+     * The speech engine (Google, Samsung…) is another app, and a "network"
+     * voice would send what Jarvis says to the engine's server. Switches to an
+     * installed offline voice for the language when the phone has one.
+     *
+     * @return true: the voice in use works offline; false: only an online voice; null: couldn't tell
+     */
+    private Boolean preferOfflineVoice(Locale wanted) {
+        try {
+            Voice current = tts.getVoice();
+            if (current != null && !current.isNetworkConnectionRequired()) return Boolean.TRUE;
+            Voice best = null;
+            Set<Voice> voices = tts.getVoices();
+            if (voices != null) {
+                for (Voice v : voices) {
+                    if (v == null || v.isNetworkConnectionRequired() || v.getLocale() == null) continue;
+                    Set<String> features = v.getFeatures();
+                    if (features != null && features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)) continue;
+                    if (!wanted.getLanguage().equals(v.getLocale().getLanguage())) continue;
+                    if (best == null || rank(v, wanted) > rank(best, wanted)) best = v;
+                }
+            }
+            if (best != null && tts.setVoice(best) == TextToSpeech.SUCCESS) return Boolean.TRUE;
+            return current == null ? null : Boolean.FALSE;
+        } catch (RuntimeException e) {
+            Log.e(TAG, "Voice check failed", e);
+            return null;
+        }
+    }
+
+    /** Same country first (Indian English for en-IN), then the engine's quality rating. */
+    private static int rank(Voice v, Locale wanted) {
+        int score = v.getQuality();
+        if (wanted.getCountry().equalsIgnoreCase(v.getLocale().getCountry())) score += 10_000;
+        return score;
+    }
+
+    /** True: replies use an offline voice. False: only an online voice is available. Null: unknown / not ready. */
+    public Boolean offlineVoice() {
+        return offlineVoice;
     }
 
     public void setOnIdle(Runnable r) {

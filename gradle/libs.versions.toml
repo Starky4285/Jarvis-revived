@@ -1,9 +1,12 @@
 [versions]
 agp = "9.1.0"
 junit = "4.13.2"
+sqlcipher = "4.19.1"
+androidxSqlite = "2.7.0"
 
 [libraries]
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+androidx-sqlite = { group = "androidx.sqlite", name = "sqlite", version.ref = "androidxSqlite" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

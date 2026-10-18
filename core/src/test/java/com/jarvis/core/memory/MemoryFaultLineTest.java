@@ -21,13 +21,13 @@ public final class MemoryFaultLineTest {
 
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
-    private InMemoryMemoryStore store;
+    private VolatileMemoryStore store;
     private MemoryEngine engine;
     private long now;
 
     @Before
     public void setUp() {
-        store = new InMemoryMemoryStore();
+        store = new VolatileMemoryStore();
         now = ZonedDateTime.of(2026, 10, 14, 10, 0, 0, 0, IST).toInstant().toEpochMilli();
         engine = new MemoryEngine(store, () -> now, IST);
     }
@@ -232,7 +232,7 @@ public final class MemoryFaultLineTest {
 
     @Test
     public void secretsAreDroppedNotStoredPlainWhenEncryptionFails() {
-        MemoryStore failing = new InMemoryMemoryStore() {
+        MemoryStore failing = new VolatileMemoryStore() {
             @Override
             public void putProtected(String key, String label, String value, long now) {
                 throw new IllegalStateException("keystore unavailable");

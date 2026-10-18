@@ -1,11 +1,11 @@
 package com.jarvis.core.memory;
 
-/** Lets tests in other packages get the test-only in-memory store. */
+/** Lets tests in other packages get a RAM-only store. */
 public final class TestStores {
     private TestStores() {
     }
 
     public static MemoryStore inMemory() {
-        return new InMemoryMemoryStore();
+        return new VolatileMemoryStore();
     }
 }

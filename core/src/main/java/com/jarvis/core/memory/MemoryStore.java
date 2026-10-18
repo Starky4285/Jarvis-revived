@@ -3,9 +3,10 @@ package com.jarvis.core.memory;
 import java.util.List;
 
 /**
- * Storage contract. The only implementation that ships is the Android SQLite
- * store; tests use an in-memory one. Stores are dumb: every decision (what to
- * save, overwrite, forget) is made by {@link MemoryEngine}.
+ * Storage contract. The app's implementation is the SQLCipher-encrypted vault;
+ * {@link VolatileMemoryStore} keeps memory in RAM (tests, and the app's
+ * fallback when secure storage fails). Stores are dumb: every decision (what
+ * to save, overwrite, forget) is made by {@link MemoryEngine}.
  */
 public interface MemoryStore {
 

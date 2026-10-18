@@ -22,11 +22,20 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Core unit tests (memory, routing, answer rules)
+      - name: Core unit tests (memory, commands, routing, answer rules)
         run: ./gradlew :core:test --stacktrace
 
       - name: Build debug APK (Java + native llama.cpp)
         run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Privacy check (the APK must not have the INTERNET permission)
+        run: |
+          AAPT2="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)aapt2"
+          "$AAPT2" dump permissions app/build/outputs/apk/debug/app-debug.apk | tee permissions.txt
+          if grep -q "android.permission.INTERNET" permissions.txt; then
+            echo "::error::The APK declares android.permission.INTERNET. Jarvis must never be able to connect."
+            exit 1
+          fi
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
@@ -46,7 +55,7 @@ jobs:
             --prerelease \
             --target "${{ github.sha }}" \
             --title "Latest debug build" \
-            --notes "Debug APK built from ${{ github.sha }}. Install on the phone, then Import model (Phi-3-mini Q4_K_M GGUF)."
+            --notes "Debug APK built from ${{ github.sha }}. Install on the phone, then Import model (a GGUF such as Qwen2.5-1.5B-Instruct Q4_K_M)."
 
       - name: Upload test reports on failure
         if: failure()
