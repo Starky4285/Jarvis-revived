@@ -13,15 +13,18 @@ public interface ChatModel {
     State state();
 
     /**
-     * Runs one prompt and returns the raw text (may be empty). Blocking; never
-     * called on the main thread.
+     * Chat reply (cache slot "chat"). Blocking; never called on the main thread.
      *
-     * @param maxSentences stop after this many complete sentences (chat replies)
+     * @param maxSentences stop after this many complete sentences
      */
-    String generate(String prompt, int maxTokens, int maxSentences, PartialListener listener);
+    String generate(ChatPrompt prompt, int maxTokens, int maxSentences, PartialListener listener);
 
-    /** Model-generated JSON (memory extraction); stops when the object closes. */
-    String generateJson(String prompt, int maxTokens);
+    /**
+     * Structured output (cache slot "tools"): the command translator and the
+     * memory extractor. When {@code grammar} (GBNF) is given, the model can only
+     * produce text that matches it. Stops when the JSON object closes.
+     */
+    String generateJson(ChatPrompt prompt, String grammar, int maxTokens);
 
     /** Stops the current generation as soon as possible. Safe from any thread. */
     void abort();

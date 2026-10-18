@@ -12,6 +12,10 @@ final class LlamaBridge {
     static final int MODE_JSON = 1;
     static final int MODE_FREE = 2;
 
+    /** Cache slots (llama.cpp sequence ids). With a one-slot plan both map to 0. */
+    static final int SLOT_CHAT = 0;
+    static final int SLOT_TOOLS = 1;
+
     static final boolean LIBRARY_LOADED;
 
     static {
@@ -34,10 +38,31 @@ final class LlamaBridge {
     private LlamaBridge() {
     }
 
-    static native boolean nativeLoadModel(String path, int contextSize, int threads);
+    /** Loads the weights only; follow with {@link #nativeModelInfo} and {@link #nativeCreateContext}. */
+    static native boolean nativeLoadModel(String path, int threads);
 
+    /** {n_layer, n_head, n_head_kv, n_embd, n_ctx_train, has_chat_template (0/1)}. */
+    static native int[] nativeModelInfo();
+
+    /** Short description, e.g. "qwen2 1.5B Q4_K - Medium". */
+    static native String nativeModelDesc();
+
+    /** Creates the KV cache: {@code slots} × {@code tokensPerSlot} tokens. */
+    static native boolean nativeCreateContext(int tokensPerSlot, int slots);
+
+    /**
+     * Applies the model's chat template. Returns null if the model has none that
+     * llama.cpp understands (caller falls back to the Phi-3 format).
+     */
+    static native String nativeFormatChat(String[] roles, String[] contents, boolean addAssistant);
+
+    /**
+     * @param maxNewTokens 0 = only decode the prompt into the slot's cache (warm-up)
+     * @param grammar      GBNF for MODE_JSON, or null
+     * @param slot         {@link #SLOT_CHAT} or {@link #SLOT_TOOLS}
+     */
     static native String nativeGenerate(String prompt, int maxNewTokens, int mode, int maxSentences,
-                                        StreamCallback callback);
+                                        String grammar, int slot, StreamCallback callback);
 
     static native void nativeAbort();
 

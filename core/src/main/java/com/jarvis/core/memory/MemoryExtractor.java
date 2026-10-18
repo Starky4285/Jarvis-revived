@@ -1,5 +1,6 @@
 package com.jarvis.core.memory;
 
+import com.jarvis.core.llm.ChatPrompt;
 import com.jarvis.core.text.TextTools;
 
 import java.util.regex.Matcher;
@@ -17,14 +18,22 @@ public interface MemoryExtractor {
     String propose(String sentence);
 
     /** Prompt the app sends to the model. Kept here so it is versioned with the validator. */
-    static String buildPrompt(String sentence) {
+    static ChatPrompt buildPrompt(String sentence) {
         String safe = TextTools.sanitizeForPrompt(sentence, 240);
-        return "<|system|>\n"
-                + "Extract one personal fact from the user's sentence. "
-                + "Reply ONLY with JSON: {\"key\": \"short noun phrase\", \"value\": \"the fact\"}. "
-                + "Use the user's words. If there is no clear fact, reply {\"key\": \"\", \"value\": \"\"}."
-                + "<|end|>\n<|user|>\n" + safe + "<|end|>\n<|assistant|>\n";
+        return ChatPrompt.builder()
+                .system("Extract one personal fact from the user's sentence. "
+                        + "Reply ONLY with JSON: {\"key\": \"short noun phrase\", \"value\": \"the fact\"}. "
+                        + "Use the user's words. If there is no clear fact, reply {\"key\": \"\", \"value\": \"\"}.")
+                .user(safe)
+                .build();
     }
+
+    /** GBNF: the model can only answer with {"key": "...", "value": "..."}. */
+    String GRAMMAR = "root ::= \"{\" ws \"\\\"key\\\":\" ws key ws \",\" ws \"\\\"value\\\":\" ws val ws \"}\"\n"
+            + "key ::= \"\\\"\" ch{0,40} \"\\\"\"\n"
+            + "val ::= \"\\\"\" ch{0,160} \"\\\"\"\n"
+            + "ch ::= [^\"\\\\\\x00-\\x1f]\n"
+            + "ws ::= \" \"?\n";
 
     /** A checked proposal. */
     final class Proposal {

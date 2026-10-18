@@ -1,6 +1,7 @@
 package com.jarvis.core.turn;
 
 import com.jarvis.core.llm.ChatModel;
+import com.jarvis.core.llm.ChatPrompt;
 import com.jarvis.core.memory.MemoryEngine;
 import com.jarvis.core.memory.TestStores;
 
@@ -22,27 +23,42 @@ public final class TurnRouterTest {
 
     static final class FakeActions implements DeviceActions {
         final List<String> log = new ArrayList<>();
-        @Override public String call(String who) { log.add("call:" + who); return "Calling " + who + "."; }
+        @Override public CallTarget findCallTarget(String who) {
+            if (who.equalsIgnoreCase("nobody")) return CallTarget.notFound(who);
+            return CallTarget.found(who, Character.toUpperCase(who.charAt(0)) + who.substring(1), "98480 12345");
+        }
+        @Override public String call(CallTarget t) { log.add("call:" + t.asked); return "Calling " + t.label + "."; }
         @Override public String openApp(String app) { log.add("open:" + app); return "Opening " + app + "."; }
         @Override public String setAlarm(int h, int m) { log.add("alarm:" + h + ":" + m); return "Alarm set."; }
         @Override public String setTimer(int s) { log.add("timer:" + s); return "Timer set."; }
         @Override public String batteryStatus() { log.add("battery"); return "Battery is at 80 percent."; }
+        @Override public String directions(String query, String spoken, String mode, boolean navigate) {
+            log.add("directions:" + query + "|" + spoken + "|" + mode + "|" + navigate);
+            return "Opening directions to " + spoken + ".";
+        }
     }
 
     static final class FakeModel implements ChatModel {
         State state = State.READY;
         final List<String> prompts = new ArrayList<>();
         final List<String> outputs = new ArrayList<>();
+        final List<String> jsonPrompts = new ArrayList<>();
+        final List<String> jsonOutputs = new ArrayList<>();
+        final List<String> grammars = new ArrayList<>();
         boolean aborted;
         boolean streamChunks;
         @Override public State state() { return state; }
-        @Override public String generate(String prompt, int maxTokens, int maxSentences, PartialListener l) {
-            prompts.add(prompt);
+        @Override public String generate(ChatPrompt prompt, int maxTokens, int maxSentences, PartialListener l) {
+            prompts.add(prompt.toPhi3());
             String out = outputs.isEmpty() ? "" : outputs.remove(0);
             if (streamChunks && l != null && !out.isEmpty()) l.onPartial(out);
             return out;
         }
-        @Override public String generateJson(String prompt, int maxTokens) { return ""; }
+        @Override public String generateJson(ChatPrompt prompt, String grammar, int maxTokens) {
+            jsonPrompts.add(prompt.toPhi3());
+            grammars.add(grammar);
+            return jsonOutputs.isEmpty() ? "" : jsonOutputs.remove(0);
+        }
         @Override public void abort() { aborted = true; }
     }
 
@@ -85,7 +101,8 @@ public final class TurnRouterTest {
 
     @Test
     public void deviceCommandsGoToActions() {
-        say("call ravi");
+        assertEquals(TurnRouter.Route.CONFIRM, say("call ravi").route);
+        say("yes");
         say("jarvis open youtube");
         say("set an alarm for 6:30 am");
         say("wake me up at 7 pm");
@@ -128,7 +145,7 @@ public final class TurnRouterTest {
 
     @Test
     public void promptStartsWithTheSameCacheablePrefixEveryTime() {
-        String prefix = com.jarvis.core.llm.PromptBuilder.staticPrefix("Jarvis");
+        String prefix = com.jarvis.core.llm.PromptBuilder.warmup("Jarvis").toPhi3();
         model.outputs.add("Hello there, nice to meet you.");
         say("hello");
         say("my name is arjun");           // memory turn: must not enter the model window
@@ -195,8 +212,11 @@ public final class TurnRouterTest {
     @Test
     public void compoundCommandsRunEachPart() {
         TurnRouter.Result r = say("open camera and call ravi");
+        assertEquals(java.util.Collections.singletonList("open:camera"), actions.log);
+        assertTrue(r.reply, r.reply.contains("Opening camera") && r.reply.contains("Call Ravi?"));
+        assertTrue(r.awaitingConfirmation);
+        say("yes");
         assertEquals(java.util.Arrays.asList("open:camera", "call:ravi"), actions.log);
-        assertTrue(r.reply, r.reply.contains("Opening camera") && r.reply.contains("Calling ravi"));
     }
 
     @Test

@@ -3,9 +3,10 @@ package com.jarvis.revived.memory;
 import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
-import android.database.sqlite.SQLiteDatabase;
-import android.database.sqlite.SQLiteOpenHelper;
 import android.util.Log;
+
+import net.zetetic.database.sqlcipher.SQLiteDatabase;
+import net.zetetic.database.sqlcipher.SQLiteOpenHelper;
 
 import com.jarvis.core.memory.Episode;
 import com.jarvis.core.memory.Fact;
@@ -17,24 +18,27 @@ import java.util.List;
 
 /**
  * The one memory database: three tables, all values bound as parameters
- * (never concatenated into SQL). Protected values are AES-GCM encrypted with
- * an Android Keystore key before they touch disk.
+ * (never concatenated into SQL).
  *
- * Lives in app-private storage, which Android encrypts at rest (file-based
- * encryption); backups are disabled in the manifest.
+ * The WHOLE file is encrypted with SQLCipher (AES-256): facts, notes, the
+ * conversation log and every index. The key comes from {@link VaultKey} and is
+ * wrapped by the Android Keystore. Protected values (passwords, PINs) are
+ * additionally AES-GCM encrypted with their own Keystore key before they are
+ * written. Open it through {@link MemoryVault}, which also migrates the old
+ * unencrypted database once.
  */
 public final class SqliteMemoryStore extends SQLiteOpenHelper implements MemoryStore {
 
     private static final String TAG = "MemoryStore";
-    private static final String DB_NAME = "jarvis_memory.db";
-    private static final int DB_VERSION = 1;
+    /** Encrypted database. (v0.1 used an unencrypted "jarvis_memory.db"; see MemoryVault.) */
+    static final String DB_NAME = "jarvis_vault.db";
+    static final int DB_VERSION = 1;
 
     private static final String[] FACT_COLUMNS =
             {"id", "fact_key", "label", "value", "source", "created_at", "superseded_at"};
 
-    public SqliteMemoryStore(Context context) {
-        super(context.getApplicationContext(), DB_NAME, null, DB_VERSION);
-        setWriteAheadLoggingEnabled(true);
+    SqliteMemoryStore(Context context, String dbName, byte[] key, boolean writeAheadLogging) {
+        super(context.getApplicationContext(), dbName, key, null, DB_VERSION, 0, null, null, writeAheadLogging);
     }
 
     @Override

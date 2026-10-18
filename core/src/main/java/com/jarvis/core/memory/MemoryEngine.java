@@ -669,6 +669,48 @@ public final class MemoryEngine {
         return Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
+    /**
+     * A remembered place for directions or rides: "shiva temple" → the address
+     * the user saved with "remember shiva temple is Ramalingeswara temple,
+     * Kukatpally". Returns null when nothing clearly matches (the phrase is then
+     * used as a normal map search). Protected items and notes are never used.
+     */
+    public synchronized Fact placeFor(String phrase) {
+        String cleaned = TextTools.trimPunctuation(phrase).replaceFirst("(?i)^(?:the|my|our)\\s+", "");
+        String key = KeyNormalizer.canonical(cleaned);
+        if (key.isEmpty()) return null;
+
+        for (String candidate : new String[]{key, key + " address", key + " location"}) {
+            Fact f = store.activeFact(candidate);
+            if (f != null && !f.isNote() && !SensitiveKeys.isSensitiveKey(f.key)) return f;
+        }
+
+        // Every word of the phrase must be in the saved key ("temple" alone must not pick
+        // "shiva temple" over "hanuman temple" by accident: ties are refused).
+        List<String> q = TextTools.contentTokens(key);
+        if (q.isEmpty()) return null;
+        Fact best = null;
+        int bestExtra = Integer.MAX_VALUE;
+        boolean tie = false;
+        for (Fact f : store.activeFacts()) {
+            if (f.isNote() || SensitiveKeys.isSensitiveKey(f.key)) continue;
+            List<String> k = TextTools.contentTokens(f.key);
+            if (!k.containsAll(q)) continue;
+            int extra = k.size() - q.size();
+            for (String w : k) {
+                if (w.equals("address") || w.equals("location") || w.equals("place")) extra--;
+            }
+            if (extra < bestExtra) {
+                best = f;
+                bestExtra = extra;
+                tie = false;
+            } else if (extra == bestExtra) {
+                tie = true;
+            }
+        }
+        return tie ? null : best;
+    }
+
     /** For UI: one line per fact, newest first. Protected values are masked. */
     public synchronized List<String> describeAll() {
         List<String> out = new ArrayList<>();

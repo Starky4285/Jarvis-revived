@@ -12,7 +12,7 @@ voice ("no, it's blue" / "never mind") instead of by ever more parsing rules.
 utterance ─► MemoryParser (shapes) ─┐
                                     ├─► MemoryEngine decides ─► MemoryStore writes ─► spoken confirmation
 "remember …" with no clear shape ───┘        ▲
-     └─► MemoryExtractor (Phi-3 JSON) ─► validate (grounded, short, not instruction-like)
+     └─► MemoryExtractor (model, grammar-forced JSON) ─► validate (grounded, short, not instruction-like)
 ```
 
 * **Explicit** — anything after "remember / note / save / keep in mind" is
@@ -46,12 +46,25 @@ utterance ─► MemoryParser (shapes) ─┐
   words overlap the question, within 400 characters, sanitized, inside
   `<memory>…</memory>`.
 
-## Storage (one SQLite file, app-private, never backed up)
+## Saved places
+
+A fact can be a place: "remember Shiva temple is Ramalingeswara Swamy temple,
+Kukatpally". When a directions request names it ("take me to the Shiva
+temple"), `MemoryEngine.placeFor` looks for the exact key, then the key plus
+"address" or "location", then a saved key containing every word of the
+request (fewest extra words wins). Two equally good matches are never guessed
+between ("the temple" with two temples saved); Maps then searches the words
+as said. Notes and protected items are never used as places.
+
+## Storage (one SQLCipher-encrypted file, app-private, never backed up)
+
+The whole database file, `jarvis_vault.db`, is encrypted with SQLCipher; its
+key is wrapped by the Android Keystore (see [SECURITY.md](SECURITY.md)).
 
 | Table | Holds | Notes |
 |---|---|---|
 | `facts` | key, label, value, source, created_at, superseded_at | one active row per key; older rows are history until "forget" |
-| `protected_items` | key, label, value_encrypted | AES-256-GCM, key in Android Keystore; if encryption fails the secret is **not** stored |
+| `protected_items` | key, label, value_encrypted | encrypted again with AES-256-GCM and its own Keystore key; if that fails the secret is **not** stored |
 | `episodes` | rolling log of the last 1,000 turns | secrets are redacted before logging |
 
 Protected items (passwords, PINs, OTPs, card/account/Aadhaar/PAN numbers,

@@ -12,4 +12,7 @@
     <string name="notification_channel">Assistant</string>
     <string name="notification_listening">Listening hands-free</string>
     <string name="notification_actions">Jarvis actions</string>
+    <string name="confirm">Yes, do it</string>
+    <string name="cancel">Cancel</string>
+    <string name="privacy">Privacy</string>
 </resources>

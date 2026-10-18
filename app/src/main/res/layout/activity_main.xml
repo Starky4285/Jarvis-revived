@@ -52,6 +52,30 @@
             android:orientation="vertical" />
     </ScrollView>
 
+    <!-- Shown while Jarvis waits for "yes or no" (calls now; sending, deleting, booking later). -->
+    <LinearLayout
+        android:id="@+id/confirmRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <Button
+            android:id="@+id/btnConfirm"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/confirm" />
+
+        <Button
+            android:id="@+id/btnCancel"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/cancel" />
+    </LinearLayout>
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -123,5 +147,12 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="@string/memory" />
+
+        <Button
+            android:id="@+id/btnPrivacy"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/privacy" />
     </LinearLayout>
 </LinearLayout>

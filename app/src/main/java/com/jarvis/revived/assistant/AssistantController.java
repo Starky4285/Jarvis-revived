@@ -7,15 +7,17 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
+import com.jarvis.core.command.CommandTranslator;
 import com.jarvis.core.llm.ChatModel;
 import com.jarvis.core.llm.PromptBuilder;
+import com.jarvis.core.memory.DeferredMemoryStore;
 import com.jarvis.core.memory.MemoryEngine;
 import com.jarvis.core.turn.TurnRouter;
 import com.jarvis.revived.actions.ActionLauncher;
 import com.jarvis.revived.actions.AndroidActions;
 import com.jarvis.revived.llm.LlamaModel;
 import com.jarvis.revived.llm.ModelFiles;
-import com.jarvis.revived.memory.SqliteMemoryStore;
+import com.jarvis.revived.memory.MemoryVault;
 import com.jarvis.revived.speech.SpeechInput;
 import com.jarvis.revived.speech.SpeechOutput;
 
@@ -52,12 +54,23 @@ public final class AssistantController {
         /** Jarvis' reply so far while the model is still writing it (replaced by the final transcript). */
         default void onReplyProgress(String textSoFar) {
         }
+
+        /** Jarvis asked "… — yes or no?" (show Confirm / Cancel) or the question is over. */
+        default void onAwaitingConfirmation(boolean waiting) {
+        }
+
+        /** No on-device speech recognizer and online speech not allowed: offer typing / the opt-in. */
+        default void onSpeechUnavailable() {
+        }
     }
 
     /** If the model hasn't finished after this long, stop it and say so. */
     private static final long THINKING_LIMIT_MS = 90_000L;
     private static final String PREFS = "jarvis_settings";
     private static final String KEY_THREADS = "llm_threads";
+    private static final String KEY_ONLINE_SPEECH = "allow_online_speech";
+    /** Must match TurnRouter.CONFIRM_WINDOW_MS: the buttons disappear when the question expires. */
+    private static final long CONFIRM_WINDOW_MS = 60_000L;
 
     private final Context app;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -72,11 +85,15 @@ public final class AssistantController {
     private static final int HISTORY_LIMIT = 60;
 
     private final MemoryEngine memory;
+    /** Null while the vault is still being opened; false only for the RAM-only fallback. */
+    private volatile Boolean memoryEncrypted;
     private final LlamaModel model;
     private final TurnRouter router;
     private final SpeechOutput tts;
     private SpeechInput stt;
 
+    private boolean awaitingConfirmation = false;
+    private final Runnable confirmExpired = () -> setAwaitingConfirmation(false);
     private Status status = Status.IDLE;
     private boolean busy = false;
     private boolean handsFree = false;
@@ -101,13 +118,23 @@ public final class AssistantController {
     public AssistantController(Context context) {
         this.app = context.getApplicationContext();
 
-        SqliteMemoryStore store = new SqliteMemoryStore(app);
-        memory = new MemoryEngine(store, System::currentTimeMillis, ZoneId.systemDefault());
+        // Everything Jarvis remembers lives in one SQLCipher-encrypted vault. Unlocking it (Keystore,
+        // decryption, a one-time migration) is the brain thread's first job, so launch never waits for it;
+        // all memory work runs on that thread, after it.
+        DeferredMemoryStore vaultStore = new DeferredMemoryStore(() -> {
+            MemoryVault.Opened vault = MemoryVault.open(app);
+            memoryEncrypted = vault.encrypted;
+            if (!vault.notice.isEmpty()) main.post(() -> transcript(false, vault.notice));
+            return vault.store;
+        });
+        memory = new MemoryEngine(vaultStore, System::currentTimeMillis, ZoneId.systemDefault());
+        brain.execute(vaultStore::open);
 
         model = new LlamaModel(app);
         model.setThreads(app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getInt(KEY_THREADS, LlamaModel.DEFAULT_THREADS));
-        model.setWarmupPrompt(PromptBuilder.staticPrefix(ASSISTANT_NAME));
+        // Fixed prefixes kept in the model's cache: the chat system prompt and the command translator.
+        model.setWarmupPrompts(PromptBuilder.warmup(ASSISTANT_NAME), CommandTranslator.warmup());
         model.setListener((state, detail) -> main.post(() -> {
             for (Listener l : listeners) l.onModelState(state, detail);
         }));
@@ -120,8 +147,9 @@ public final class AssistantController {
         tts = new SpeechOutput(app, LANGUAGE);
         tts.setOnIdle(this::afterSpeaking);
 
-        transcript(false, "Hi, I'm " + ASSISTANT_NAME + ". I run fully on this phone. Try: \"my name is …\", "
-                + "\"what time is it\", \"set a timer for 5 minutes\", or ask me anything.");
+        transcript(false, "Hi, I'm " + ASSISTANT_NAME + ". I run fully on this phone and nothing leaves it. Try: "
+                + "\"directions to Domino's\", \"set a timer for 5 minutes\", \"call Amma\", "
+                + "\"remember Shiva temple is …\", or ask me anything.");
         model.loadAsync();
     }
 
@@ -133,6 +161,7 @@ public final class AssistantController {
         for (Object[] entry : history) l.onTranscript((Boolean) entry[0], (String) entry[1]);
         l.onStatus(status, "");
         l.onModelState(model.state(), model.detail());
+        l.onAwaitingConfirmation(awaitingConfirmation);
     }
 
     public void removeListener(Listener l) {
@@ -157,6 +186,39 @@ public final class AssistantController {
 
     public int threads() {
         return model.threads();
+    }
+
+    // ------------------------------------------------------------- privacy
+
+    /** True: encrypted vault. False: secure storage failed, memory is RAM-only this session. Null: still opening. */
+    public Boolean memoryEncrypted() {
+        return memoryEncrypted;
+    }
+
+    public boolean allowOnlineSpeech() {
+        return app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ONLINE_SPEECH, false);
+    }
+
+    /** Opt-in: lets the phone's normal recognizer (which may send audio to Google) be used. */
+    public void setAllowOnlineSpeech(boolean allow) {
+        app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ONLINE_SPEECH, allow).apply();
+        if (stt != null && !stt.isActive()) {
+            stt.destroy();
+            stt = null;
+        }
+    }
+
+    public SpeechInput.Mode speechMode() {
+        return SpeechInput.availableMode(app, allowOnlineSpeech());
+    }
+
+    /** True: replies use an offline voice. False: only an online voice. Null: unknown. */
+    public Boolean offlineVoice() {
+        return tts.offlineVoice();
+    }
+
+    public String modelDetail() {
+        return model.state() + " · " + model.detail();
     }
 
     /** Cycles 2 → 4 → 6 → 8 threads (for finding the fastest setting on this phone). */
@@ -249,13 +311,23 @@ public final class AssistantController {
 
     private void startListening() {
         if (busy || status == Status.SPEAKING) return;
-        if (!SpeechInput.isAvailable(app)) {
-            transcript(false, "Speech recognition isn't available on this phone. You can type instead.");
+        SpeechInput.Mode mode = SpeechInput.availableMode(app, allowOnlineSpeech());
+        if (mode == SpeechInput.Mode.NONE) {
+            transcript(false, "This phone has no offline speech recognition, and I don't send your voice online "
+                    + "unless you allow it. You can type, or allow online speech in Privacy.");
+            boolean wasHandsFree = handsFree;
             handsFree = false;
+            if (wasHandsFree) app.stopService(new Intent(app, AssistantService.class));
+            setStatus(Status.IDLE, "");
+            for (Listener l : listeners) l.onSpeechUnavailable();
             return;
         }
+        if (stt != null && stt.mode() != mode) {
+            stt.destroy();
+            stt = null;
+        }
         if (stt == null) {
-            stt = new SpeechInput(app, LANGUAGE, new SpeechInput.Listener() {
+            stt = new SpeechInput(app, LANGUAGE, mode, new SpeechInput.Listener() {
                 @Override
                 public void onListening() {
                     setStatus(Status.LISTENING, "");
@@ -275,6 +347,11 @@ public final class AssistantController {
                 @Override
                 public void onNoResult(boolean silence, String reason) {
                     onListenFailed(silence, reason);
+                }
+
+                @Override
+                public void onNotice(String message) {
+                    transcript(false, message);
                 }
             });
         }
@@ -345,7 +422,8 @@ public final class AssistantController {
             setStatus(Status.SPEAKING, "");
             return;
         }
-        Log.d(TAG, "route=" + r.route + " streamed=" + r.streamed);
+        // Route and command name only ("maps.directions [rules]"): never log what the user said.
+        Log.d(TAG, "route=" + r.route + " streamed=" + r.streamed + (r.command.isEmpty() ? "" : " cmd=" + r.command));
 
         if (r.route == TurnRouter.Route.STOP) {
             tts.stop();
@@ -354,6 +432,7 @@ public final class AssistantController {
             return;
         }
 
+        setAwaitingConfirmation(r.awaitingConfirmation);
         if (!r.reply.isEmpty()) transcript(false, r.reply);
         if (!r.streamed && !r.reply.isEmpty()) {
             setStatus(Status.SPEAKING, "");
@@ -373,6 +452,14 @@ public final class AssistantController {
     }
 
     // ---------------------------------------------------------------- events
+
+    private void setAwaitingConfirmation(boolean waiting) {
+        main.removeCallbacks(confirmExpired);
+        if (waiting) main.postDelayed(confirmExpired, CONFIRM_WINDOW_MS);
+        if (awaitingConfirmation == waiting) return;
+        awaitingConfirmation = waiting;
+        for (Listener l : listeners) l.onAwaitingConfirmation(waiting);
+    }
 
     private void setStatus(Status s, String detail) {
         status = s;

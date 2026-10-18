@@ -1,5 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+        PRIVACY RULE: this app must NOT declare android.permission.INTERNET.
+        Without it Android blocks every network connection from Jarvis, so nothing
+        it stores or hears can leave the phone. (The future mail bridge will be a
+        separate, small app that can only talk to the user's mail server.)
+        The line below strips INTERNET even if a library tries to add it, and CI
+        fails the build if the APK ever contains it.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
 
     <!-- Core: listen and run in the background while listening. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -35,6 +46,12 @@
         </intent>
         <intent>
             <action android:name="android.intent.action.SET_TIMER" />
+        </intent>
+        <!-- Directions: Google Maps if installed, otherwise any app that handles geo: searches. -->
+        <package android:name="com.google.android.apps.maps" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="geo" />
         </intent>
     </queries>
 

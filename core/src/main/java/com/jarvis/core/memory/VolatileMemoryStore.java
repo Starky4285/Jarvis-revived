@@ -6,8 +6,15 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Test double with the same semantics as the Android SQLite store. Test-only on purpose. */
-class InMemoryMemoryStore implements MemoryStore {
+/**
+ * RAM-only store with the same semantics as the encrypted Android store.
+ *
+ * Used by the tests, and by the app ONLY when the encrypted vault cannot be
+ * opened at all (no working Android Keystore): Jarvis then still works for the
+ * session, says that nothing will be saved, and never writes memory to disk
+ * unencrypted.
+ */
+public class VolatileMemoryStore implements MemoryStore {
 
     private final List<Fact> facts = new ArrayList<>();
     private final Map<String, ProtectedItem> secrets = new LinkedHashMap<>();
